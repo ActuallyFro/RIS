@@ -1,134 +1,67 @@
-#![allow(non_snake_case)]
-use std::io::{self, BufRead, Write, Read}; // Add `Read` here
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use tokio::sync::broadcast;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{broadcast, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::Arc;
 
+type SharedState = Arc<Mutex<broadcast::Sender<String>>>;
 
-#[derive(Debug)]
-struct Client {
-    nickname: String,
-    stream: TcpStream,
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:6667").await?;
+    println!("IRC server running on 127.0.0.1:6667...");
 
-fn main() -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:6667")?;
-    let clients = Arc::new(Mutex::new(Vec::new()));
-    let (tx, _rx) = broadcast::channel::<String>(100);
+    let (tx, _) = broadcast::channel(100);
+    let state = Arc::new(Mutex::new(tx));
 
-    println!("IRC server running on 127.0.0.1:6667");
-    let clients_clone = Arc::clone(&clients);
-    // Main server shutdown listener
-    thread::spawn(move || {
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line.unwrap_or_else(|_| "".to_string());
-            if line.trim() == "/exit" {
-                println!("Shutting down server...");
-                std::process::exit(0);
+    loop {
+        let (socket, _) = listener.accept().await?;
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = handle_client(socket, state).await {
+                eprintln!("Error handling client: {}", e);
             }
-        }
-    });
-
-    // Accept incoming client connections
-    for stream in listener.incoming() {
-        let stream = stream?;
-        let clients_clone = Arc::clone(&clients_clone);
-        let tx_clone = tx.clone();
-
-        thread::spawn(move || {
-            handle_client(stream, clients_clone, tx_clone);
         });
     }
-
-    Ok(())
 }
 
-fn handle_client(stream: TcpStream, clients: Arc<Mutex<Vec<Client>>>, tx: broadcast::Sender<String>) {
-    let mut stream = stream;
-    let mut username = String::new();
-    let mut nickname = String::new();
-    let mut buffer = [0; 1024];
+async fn handle_client(
+    mut socket: TcpStream,
+    state: SharedState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = [0u8; 1024];
+    let username;
+    let tx = state.lock().await.clone();
+    let mut rx = tx.subscribe();
 
-    // Greeting and username setup
-    write!(stream, "Welcome to #Main channel!\r\nEnter your username: ").unwrap();
-    stream.flush().unwrap();
-
-    // Reading initial message (NICK, USER, etc.)
-    match stream.read(&mut buffer) {
-        Ok(size) => {
-            let input = String::from_utf8_lossy(&buffer[..size]).trim().to_string();
-
-            // Handle NICK and USER commands
-            if input.starts_with("NICK") {
-                nickname = input.split_whitespace().nth(1).unwrap_or("").to_string();
-                write!(stream, "NICK set to: {}\r\n", nickname).unwrap();
-            }
-
-            if input.starts_with("USER") {
-                username = input.split_whitespace().nth(1).unwrap_or("").to_string();
-                write!(stream, "USER set to: {}\r\n", username).unwrap();
-            }
-
-            // Ensure both NICK and USER are set
-            if !nickname.is_empty() && !username.is_empty() {
-                let welcome_message = format!("{} has joined #Main.", nickname);
-                tx.send(welcome_message.clone()).unwrap_or_else(|_| 0);
-
-                // Add client to list (no need to store the stream here anymore)
-                let client = Client {
-                    nickname: nickname.clone(),
-                    stream: stream.try_clone().unwrap(),
-                };
-                clients.lock().unwrap().push(client);
-
-                write!(stream, "Welcome, {}! Type your messages below.\r\n", username).unwrap();
-                stream.flush().unwrap();
-
-                // Broadcast join
-                println!("{}", welcome_message);
-            } else {
-                eprintln!("Failed to set NICK/USER correctly.");
-                return; // Disconnect if NICK or USER not set properly
-            }
-        }
-        Err(_) => return,
+    socket.write_all(b"Welcome to #Main channel!\nEnter your username: ").await?;
+    let n = socket.read(&mut buf).await?;
+    if n == 0 {
+        return Ok(());
     }
+    username = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+    socket.write_all(format!("Welcome, {}! Type your messages below.\n", username).as_bytes())
+        .await?;
 
-    // Main client interaction loop
+    let user_tx = tx.clone();
+    let join_message = format!("{} has joined #Main.\n", username);
+    user_tx.send(join_message)?;
+
     loop {
-        match stream.read(&mut buffer) {
-            Ok(size) if size > 0 => {
-                let input = String::from_utf8_lossy(&buffer[..size]).trim().to_string();
-
-                if input.starts_with("/quit") {
-                    let leave_message = format!("{} has left #Main.", nickname);
-                    tx.send(leave_message.clone()).unwrap_or_else(|_| 0);
-                    println!("{}", leave_message);
-                    break; // Client is quitting, exit loop
+        tokio::select! {
+            Ok(n) = socket.read(&mut buf) => {
+                if n == 0 {
+                    break;
                 }
-
-                let message = format!("{}: {}", nickname, input);
-                tx.send(message.clone()).unwrap_or_else(|_| 0);
-                println!("{}", message);
-
-/*
-FIGURE OUT if direct messaging is allowed...
-// Later in the code, you could use client.stream to send messages directly to the client
-// Example: Send a message to a specific client:
-write!(client.stream, "This is a message just for you!\r\n").unwrap();
-client.stream.flush().unwrap()
-*/
-
+                let message = format!("{}: {}", username, String::from_utf8_lossy(&buf[..n]).trim());
+                tx.send(message)?;
             }
-            Ok(_) | Err(_) => break, // Handle EOF or error gracefully
+            Ok(message) = rx.recv() => {
+                socket.write_all(message.as_bytes()).await?;
+            }
         }
     }
 
-    // Handle disconnection and client removal
-    println!("{} disconnected.", nickname);
-
-    // Remove client on disconnect
-    clients.lock().unwrap().retain(|c| c.nickname != nickname);
+    let leave_message = format!("{} has left #Main.\n", username);
+    user_tx.send(leave_message)?;
+    Ok(())
 }
