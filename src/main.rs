@@ -8,41 +8,95 @@ type SharedClients = Arc<Mutex<HashMap<String, TcpStream>>>;
 
 fn handle_client(mut stream: TcpStream, clients: SharedClients, addr: String) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
-    let mut nickname = String::new();
+    let mut nickname = format!("User{}", addr.replace('.', "").replace(':', ""));
+    let mut registered = false;
 
-    writeln!(stream, ":server NOTICE * :Welcome to the IRC server!").unwrap();
+    writeln!(stream, ":server NOTICE * :Welcome to the IRC server!").ok();
 
     loop {
         let mut line = String::new();
         match reader.read_line(&mut line) {
             Ok(0) => {
                 // Client disconnected
+                stream.shutdown(std::net::Shutdown::Both).ok();
                 break;
             }
             Ok(_) => {
                 let line = line.trim_end().to_string();
+
                 if line.starts_with("NICK ") {
-                    nickname = line[5..].to_string();
-                    writeln!(stream, ":server 001 {} :Welcome to the IRC server!", nickname).unwrap();
+                    let new_nick = line[5..].to_string();
+                    if !new_nick.is_empty() {
+                        nickname = new_nick.clone();
+                        writeln!(
+                            stream,
+                            ":server 001 {} :Your nickname is now {}",
+                            nickname, nickname
+                        )
+                        .ok();
+                    } else {
+                        writeln!(stream, ":server 431 * :No nickname given").ok();
+                    }
+                } else if line.starts_with("USER ") {
+                    if registered {
+                        writeln!(stream, ":server 462 * :You are already registered").ok();
+                    } else {
+                        registered = true;
+                        writeln!(
+                            stream,
+                            ":server 001 {} :Welcome, {}!",
+                            nickname, nickname
+                        )
+                        .ok();
+                    }
+                } else if line.starts_with("USERHOST ") {
+                    writeln!(
+                        stream,
+                        ":server 302 {} :{}=+{}",
+                        nickname, nickname, addr
+                    )
+                    .ok();
                 } else if line.starts_with("JOIN ") {
                     let channel = line[5..].to_string();
-                    writeln!(stream, ":{} JOIN {}", nickname, channel).unwrap();
-                    let mut clients_lock = clients.lock().unwrap();
-                    for (nick, client) in clients_lock.iter_mut() {
-                        if nick != &nickname {
-                            writeln!(client, ":{} JOIN {}", nickname, channel).unwrap();
+                    if !channel.is_empty() && channel == "#Main" {
+                        writeln!(stream, ":{} JOIN {}", nickname, channel).ok();
+                        let mut clients_lock = clients.lock().unwrap();
+                        for (nick, client) in clients_lock.iter_mut() {
+                            if nick != &nickname {
+                                writeln!(client, ":{} JOIN {}", nickname, channel).ok();
+                            }
                         }
+                    } else {
+                        writeln!(stream, ":server 403 {} :No such channel", nickname).ok();
+                    }
+                } else if line.starts_with("PRIVMSG #Main :") {
+                    let message = line[14..].to_string();
+                    if !message.is_empty() {
+                        let mut clients_lock = clients.lock().unwrap();
+                        for (nick, client) in clients_lock.iter_mut() {
+                            // Prevent sending the message back to the sender
+                            if nick != &nickname {
+                                writeln!(client, ":{} PRIVMSG #Main :{}", nickname, message).ok();
+                            }
+                        }
+                    } else {
+                        writeln!(stream, ":server 412 {} :No text to send", nickname).ok();
                     }
                 } else if line.starts_with("QUIT") {
-                    writeln!(stream, ":{} QUIT :Goodbye!", nickname).unwrap();
+                    writeln!(stream, ":{} QUIT :Goodbye!", nickname).ok();
                     break;
+                } else if line.starts_with("CAP ") {
+                    // Ignore unsupported CAP commands
+                    continue;
                 } else {
-                    let mut clients_lock = clients.lock().unwrap();
-                    for (nick, client) in clients_lock.iter_mut() {
-                        if nick != &nickname {
-                            writeln!(client, ":{} PRIVMSG #Main :{}", nickname, line).unwrap();
-                        }
-                    }
+                    // Unknown command, include the invalid command in the response
+                    let unknown_command = line.split_whitespace().next().unwrap_or("Unknown");
+                    writeln!(
+                        stream,
+                        ":server 421 {} :Unknown command ({})",
+                        nickname, unknown_command
+                    )
+                    .ok();
                 }
             }
             Err(_) => {
@@ -51,7 +105,7 @@ fn handle_client(mut stream: TcpStream, clients: SharedClients, addr: String) {
         }
     }
 
-    // Remove client from the shared map
+    // Remove client from the shared map when they disconnect
     {
         let mut clients_lock = clients.lock().unwrap();
         clients_lock.remove(&nickname);
