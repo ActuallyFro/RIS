@@ -19,6 +19,21 @@ fn handle_client(mut stream: TcpStream, clients: SharedClients, addr: String) {
             Ok(0) => {
                 // Client disconnected
                 stream.shutdown(std::net::Shutdown::Both).ok();
+                let mut clients_lock = clients.lock().unwrap();
+                for (nick, client) in clients_lock.iter_mut() {
+                    if nick != &nickname {
+                        writeln!(client, ":{} QUIT :Goodbye!", nickname).ok();
+                    }
+                }
+                clients_lock.remove(&nickname);
+                stream.shutdown(std::net::Shutdown::Both).ok();
+                let mut clients_lock = clients.lock().unwrap();
+                for (nick, client) in clients_lock.iter_mut() {
+                    if nick != &nickname {
+                        writeln!(client, ":{} QUIT :Goodbye!", nickname).ok();
+                    }
+                }
+                clients_lock.remove(&nickname);
                 break;
             }
             Ok(_) => {
@@ -27,13 +42,22 @@ fn handle_client(mut stream: TcpStream, clients: SharedClients, addr: String) {
                 if line.starts_with("NICK ") {
                     let new_nick = line[5..].to_string();
                     if !new_nick.is_empty() {
+                        let mut clients_lock = clients.lock().unwrap();
+                        let old_nickname = nickname.clone();
+                        clients_lock.remove(&nickname);
                         nickname = new_nick.clone();
+                        clients_lock.insert(nickname.clone(), stream.try_clone().unwrap());
                         writeln!(
                             stream,
                             ":server 001 {} :Your nickname is now {}",
                             nickname, nickname
                         )
                         .ok();
+                        for (nick, client) in clients_lock.iter_mut() {
+                            if nick != &nickname {
+                                writeln!(client, ":{} NICK :{}", old_nickname, nickname).ok();
+                            }
+                        }
                     } else {
                         writeln!(stream, ":server 431 * :No nickname given").ok();
                     }
