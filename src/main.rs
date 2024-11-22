@@ -1,3 +1,7 @@
+//RIS: Rust-based IRC server (like RIZZ)
+//======================================
+// v0.1.0 <CAO: 22 Nov 2024>
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
