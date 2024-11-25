@@ -1,6 +1,6 @@
 RIS (like RIZZ): Rust-based IRC Server
 ======================================
-An Attempt to Build an IRC Server that works with the Rust-based IRC waRgaming Client (rIRC) and mIRC.
+An attempt to build an IRC server that works with the Rust-based IRC waRgaming Client (rIRC) and mIRC.
 
 * It OUGHT to comply with the [RFC for IRC Servers](https://www.rfc-editor.org/rfc/rfc2813.txt) -- but it's NOT enforced.
 

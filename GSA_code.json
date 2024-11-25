@@ -1,6 +1,6 @@
  {
    "project_name": "RIS (like RIZZ): Rust-based IRC Server",
-   "description": "n Attempt to Build an IRC Server that works with the Rust-based IRC waRgaming Client (rIRC) and mIRC.",
+   "description": "An attempt to build an IRC server that works with the Rust-based IRC waRgaming Client (rIRC) and mIRC.",
    "repository_url": "https://github.com/ActuallyFro/RIS",
    "licenses": [
      {
