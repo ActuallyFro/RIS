@@ -1,4 +1,4 @@
-//RIS: Rust-based IRC server (like RIZZ)
+//RIS (like RIZZ): Rust-based IRC server 
 //======================================
 // v0.1.0 <CAO: 22 Nov 2024>
 
