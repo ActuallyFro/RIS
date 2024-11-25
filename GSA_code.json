@@ -1,0 +1,19 @@
+ {
+   "project_name": "RIS (like RIZZ): Rust-based IRC Server",
+   "description": "n Attempt to Build an IRC Server that works with the Rust-based IRC waRgaming Client (rIRC) and mIRC.",
+   "repository_url": "https://github.com/ActuallyFro/RIS",
+   "licenses": [
+     {
+       "license_name": "Creative ",
+       "license_url": "https://opensource.org/licenses/MIT"
+     }
+   ],
+   "version": "0.1.0",
+   "maintainers": [
+     {
+       "name": "OTS A4/6 Director",
+       "email": "ots.registrar.workflow@us.af.mil"
+     }
+   ],
+   "tags": ["IRC", "server", "chat"]
+ }
