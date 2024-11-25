@@ -10,7 +10,7 @@ Known Limitations
 -----------------
 * The server is NOT configurable
   * It starts and listens only on port 6667
-  * Inly offers the `#Main` channel.
+  * Only offers the `#Main` channel.
 
 * Ctrl+C/Z/etc. or closing the application window will terminate the server.
 
